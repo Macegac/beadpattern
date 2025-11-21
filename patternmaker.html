@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Honeycomb Pattern Designer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        body {
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f3f4f6;
+            overflow: hidden;
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #c1c1c1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #a8a8a8; }
+
+        .canvas-container {
+            background-image: 
+                linear-gradient(45deg, #e5e7eb 25%, transparent 25%), 
+                linear-gradient(-45deg, #e5e7eb 25%, transparent 25%), 
+                linear-gradient(45deg, transparent 75%, #e5e7eb 75%), 
+                linear-gradient(-45deg, transparent 75%, #e5e7eb 75%);
+            background-size: 20px 20px;
+            background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+            cursor: default;
+        }
+        
+        .cursor-grab { cursor: grab; }
+        .cursor-grabbing { cursor: grabbing; }
+
+        /* Dimension Markers */
+        .dimension-line { position: absolute; background-color: #0ea5e9; }
+        .dimension-arrow {
+            position: absolute; width: 0; height: 0; 
+            border-left: 5px solid transparent; border-right: 5px solid transparent;
+            border-bottom: 8px solid #0ea5e9;
+        }
+        .dimension-text {
+            color: #0ea5e9; font-weight: 500; font-size: 1.2rem;
+            text-shadow: 0 1px 2px rgba(255,255,255,0.8); white-space: nowrap;
+        }
+
+        /* Color Picker */
+        .cp-saturation {
+            width: 100%; height: 150px; position: relative;
+            background: linear-gradient(to bottom, transparent, #000), linear-gradient(to right, #fff, transparent);
+            cursor: crosshair; border-radius: 6px 6px 0 0;
+        }
+        .cp-hue {
+            width: 100%; height: 16px; margin-top: 10px;
+            background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+            cursor: pointer; border-radius: 8px; position: relative;
+        }
+        .cp-thumb {
+            width: 12px; height: 12px; border: 2px solid white; border-radius: 50%;
+            box-shadow: 0 0 2px rgba(0,0,0,0.5); position: absolute;
+            transform: translate(-50%, -50%); pointer-events: none;
+        }
+        .cp-hue-thumb {
+            width: 10px; height: 20px; background: white;
+            box-shadow: 0 0 2px rgba(0,0,0,0.5); position: absolute; top: 50%;
+            transform: translate(-50%, -50%); pointer-events: none; border-radius: 2px;
+        }
+        input[type=number]::-webkit-inner-spin-button, 
+        input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+
+        /* Printing Styles */
+        @media print {
+            @page { size: auto; margin: 0mm; }
+            body { background: white; height: auto; overflow: visible; display: block; }
+            aside, .toolbar-area, .canvas-container-bg { display: none !important; }
+            
+            #print-area {
+                display: block !important;
+                position: absolute;
+                top: 0; left: 0;
+                width: 100%;
+                height: 100%;
+                padding: 20px;
+            }
+            
+            /* Hide interactive markers in print */
+            .dimension-line, .dimension-arrow, .dimension-text, #row-numbers, #canvas-ui-border { display: none !important; }
+            
+            /* Ensure SVG prints */
+            #grid-svg { display: block !important; overflow: visible !important; }
+            #canvas-wrapper { box-shadow: none !important; border: none !important; margin: 0 !important; transform: none !important; }
+        }
+        
+        #print-area { display: none; }
+
+        /* SVG specific */
+        #grid-svg circle {
+            transition: fill 0.1s;
+        }
+        #grid-svg circle:hover {
+            filter: brightness(0.95);
+        }
+    </style>
+</head>
+<body class="h-screen flex flex-col md:flex-row text-slate-700">
+
+    <!-- Sidebar -->
+    <aside class="w-full md:w-80 bg-white shadow-xl z-20 flex flex-col h-full border-r border-slate-200 print:hidden">
+        <div class="p-5 border-b border-slate-100">
+            <h1 class="text-xl font-bold text-slate-800 flex items-center gap-2">
+                <i class="fa-solid fa-cubes-stacked text-blue-500"></i> Pattern Pro
+            </h1>
+        </div>
+
+        <div class="flex-1 overflow-y-auto p-5 space-y-6">
+            
+            <!-- Color Picker -->
+            <div class="bg-white rounded-lg border border-slate-200 shadow-sm p-1">
+                <div id="cp-saturation" class="cp-saturation" style="background-color: red;">
+                    <div id="cp-sat-thumb" class="cp-thumb" style="top: 0%; left: 100%;"></div>
+                </div>
+                <div class="p-3">
+                    <div id="cp-hue" class="cp-hue">
+                        <div id="cp-hue-thumb" class="cp-hue-thumb" style="left: 0%;"></div>
+                    </div>
+                    <div class="flex items-center gap-3 mt-4">
+                        <div class="w-10 h-10 rounded-full shadow-inner border border-slate-200 flex-shrink-0" id="color-preview" style="background-color: #ff0000;"></div>
+                        <div class="flex-1 relative">
+                            <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs">#</span>
+                            <input type="text" id="hex-input" value="FF0000" class="w-full pl-6 pr-2 py-1.5 text-sm border border-slate-300 rounded focus:outline-none focus:border-blue-500 uppercase font-mono">
+                        </div>
+                        <button id="add-to-palette" class="p-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded transition" title="Save to Palette">
+                            <i class="fa-solid fa-plus"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Palette -->
+            <div>
+                <div class="flex justify-between items-center mb-2">
+                    <label class="text-xs font-bold uppercase tracking-wider text-slate-500">Palette</label>
+                    <button id="clear-palette" class="text-xs text-red-400 hover:text-red-600">Clear</button>
+                </div>
+                <div class="grid grid-cols-6 gap-2" id="palette-container">
+                    <!-- Generated by JS -->
+                </div>
+            </div>
+
+            <hr class="border-slate-100">
+
+            <!-- Dimensions -->
+            <div class="space-y-4">
+                <div class="flex justify-between items-end">
+                    <label class="text-sm font-semibold text-slate-700">Canvas Size</label>
+                    <div class="flex bg-slate-100 rounded p-0.5">
+                        <button class="unit-btn px-2 py-0.5 text-xs font-medium rounded bg-white shadow-sm text-slate-800" data-unit="in">IN</button>
+                        <button class="unit-btn px-2 py-0.5 text-xs font-medium rounded text-slate-500 hover:text-slate-800" data-unit="cm">CM</button>
+                        <button class="unit-btn px-2 py-0.5 text-xs font-medium rounded text-slate-500 hover:text-slate-800" data-unit="mm">MM</button>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs text-slate-500 mb-1">Width</label>
+                        <input type="number" id="input-width" value="1.37" step="0.01" class="w-full p-2 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none text-slate-700 font-mono">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-slate-500 mb-1">Height</label>
+                        <input type="number" id="input-height" value="3.69" step="0.01" class="w-full p-2 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none text-slate-700 font-mono">
+                    </div>
+                </div>
+
+                <!-- Dot Size -->
+                <div>
+                    <label class="block text-xs text-slate-500 mb-1 flex justify-between">
+                        <span>Circle Diameter (mm)</span>
+                        <span id="grid-count-display" class="text-blue-500 font-mono text-[10px]"></span>
+                    </label>
+                    <input type="number" id="input-dot-size" value="3.0" step="0.1" class="w-full p-2 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none text-slate-700 font-mono">
+                    <p class="text-[10px] text-slate-400 mt-1">Standard SS10 rhinestone is ~2.8mm</p>
+                </div>
+            </div>
+            
+            <div class="pt-4">
+                <button id="clear-canvas-btn" class="w-full py-2 border border-red-200 text-red-500 rounded hover:bg-red-50 transition text-sm font-medium">
+                    <i class="fa-solid fa-trash-can mr-2"></i> Clear Pattern
+                </button>
+            </div>
+
+        </div>
+        
+        <div class="p-3 bg-slate-50 text-center text-xs text-slate-400 border-t border-slate-200">
+             Pattern Maker v1.3 (SVG)
+        </div>
+    </aside>
+
+    <!-- Main Canvas Area -->
+    <main class="flex-1 relative overflow-hidden flex flex-col">
+        <!-- Toolbar -->
+        <div class="toolbar-area h-14 bg-white border-b border-slate-200 flex items-center px-4 justify-between shadow-sm z-10">
+            <div class="flex items-center gap-6">
+                <!-- Zoom Controls -->
+                <div class="flex items-center border border-slate-200 rounded bg-slate-50">
+                    <button id="zoom-out" class="px-3 py-1.5 hover:bg-slate-200 text-slate-600 border-r border-slate-200"><i class="fa-solid fa-minus"></i></button>
+                    <span id="zoom-level" class="px-3 text-xs font-mono text-slate-600 w-16 text-center">100%</span>
+                    <button id="zoom-in" class="px-3 py-1.5 hover:bg-slate-200 text-slate-600 border-l border-slate-200"><i class="fa-solid fa-plus"></i></button>
+                </div>
+                
+                <div class="flex gap-4 text-xs text-slate-500 items-center hidden sm:flex">
+                    <span><i class="fa-solid fa-mouse"></i> Paint</span>
+                    <span><i class="fa-regular fa-circle-dot"></i> Ctrl+Wheel Zoom</span>
+                    <span><i class="fa-solid fa-up-down-left-right"></i> Middle-Click Pan</span>
+                </div>
+            </div>
+
+            <div class="flex gap-2">
+                <button id="print-btn" class="bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-1.5 rounded text-sm font-medium transition flex items-center gap-2">
+                    <i class="fa-solid fa-print"></i> Print
+                </button>
+                 <button id="download-svg-btn" class="bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-1.5 rounded text-sm font-medium transition flex items-center gap-2" title="Download SVG Vector File">
+                    <i class="fa-solid fa-vector-square"></i> SVG
+                </button>
+                <button id="download-btn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded text-sm font-medium transition shadow-sm flex items-center gap-2">
+                    <i class="fa-solid fa-image"></i> PNG
+                </button>
+            </div>
+        </div>
+
+        <!-- Viewport -->
+        <div class="flex-1 overflow-auto bg-slate-100 relative p-12 canvas-container cursor-grab" id="scroll-container">
+            
+            <!-- Canvas Wrapper (Scalable) -->
+            <div class="relative transition-transform duration-75 origin-top-left" id="canvas-scaler" style="margin-top: 30px; margin-left: 30px;">
+                
+                <!-- The "Paper" -->
+                <div class="relative bg-white shadow-2xl" id="canvas-wrapper">
+                    
+                    <!-- Top Dimension -->
+                    <div class="absolute -top-10 left-0 w-full flex justify-center items-center" style="height: 40px;">
+                        <div class="dimension-line" style="left: 0; bottom: 5px; width: 1px; height: 15px;"></div>
+                        <div class="dimension-line" style="right: 0; bottom: 5px; width: 1px; height: 15px;"></div>
+                        <div class="dimension-line" style="left: 0; right: 0; bottom: 12px; height: 1px;"></div>
+                        <div class="dimension-arrow" style="left: -1px; bottom: 8px; transform: rotate(90deg);"></div>
+                        <div class="dimension-arrow" style="right: -1px; bottom: 8px; transform: rotate(-90deg);"></div>
+                        <span id="dim-text-top" class="dimension-text absolute -top-10 bg-slate-100/80 px-1 rounded">1.37 in</span>
+                    </div>
+
+                    <!-- Side Dimension -->
+                    <div class="absolute -right-12 top-0 h-full flex flex-col justify-center items-center" style="width: 40px;">
+                        <div class="dimension-line" style="top: 0; left: 5px; width: 15px; height: 1px;"></div>
+                        <div class="dimension-line" style="bottom: 0; left: 5px; width: 15px; height: 1px;"></div>
+                        <div class="dimension-line" style="top: 0; bottom: 0; left: 12px; width: 1px;"></div>
+                        <div class="dimension-arrow" style="top: -1px; left: 8px; transform: rotate(180deg);"></div>
+                        <div class="dimension-arrow" style="bottom: -1px; left: 8px; transform: rotate(0deg);"></div>
+                        <span id="dim-text-side" class="dimension-text absolute -right-16 top-1/2 -translate-y-1/2 bg-slate-100/80 px-1 rounded" style="writing-mode: vertical-rl;">3.69 in</span>
+                    </div>
+
+                    <!-- Row Numbers -->
+                    <div id="row-numbers" class="absolute top-0 -left-8 w-6 flex flex-col items-end pt-1 pb-1 text-[10px] text-slate-400 font-mono leading-none select-none pointer-events-none h-full">
+                        <!-- Populated by JS -->
+                    </div>
+
+                    <!-- SVG Drawing Surface -->
+                    <!-- Overflow Visible allows circles to hang off the edge while wrapper stays constrained -->
+                    <svg id="grid-svg" xmlns="http://www.w3.org/2000/svg" style="overflow: visible; display: block; cursor: crosshair;">
+                        <!-- Content injected by JS -->
+                    </svg>
+                    
+                    <!-- Border Overlay (optional UI polish) -->
+                    <div id="canvas-ui-border" class="absolute top-0 left-0 w-full h-full border border-slate-200 pointer-events-none"></div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Hidden Print Area handled by CSS -->
+
+    <script>
+        const state = {
+            color: { h: 0, s: 100, v: 100 },
+            hex: '#FF0000',
+            palette: ['#ef4444', '#f97316', '#f59e0b', '#84cc16', '#10b981', '#06b6d4', '#3b82f6', '#6366f1', '#8b5cf6', '#d946ef', '#f43f5e', '#1f2937', '#9ca3af', '#ffffff'],
+            unit: 'in',
+            width: 1.37,
+            height: 3.69,
+            dotSizeMm: 3.0,
+            zoom: 1.0,
+            cells: {}, // key: "row,col", value: hex
+            
+            // Runtime calc
+            rows: 0,
+            cols: 0,
+            wMm: 0,
+            hMm: 0
+        };
+
+        const DOM = {
+            container: document.getElementById('scroll-container'),
+            svg: document.getElementById('grid-svg'),
+            scaler: document.getElementById('canvas-scaler'),
+            wrapper: document.getElementById('canvas-wrapper'),
+            rowNums: document.getElementById('row-numbers'),
+            
+            // Inputs
+            wInput: document.getElementById('input-width'),
+            hInput: document.getElementById('input-height'),
+            dInput: document.getElementById('input-dot-size'),
+            unitBtns: document.querySelectorAll('.unit-btn'),
+            
+            // Dim text
+            dimTop: document.getElementById('dim-text-top'),
+            dimSide: document.getElementById('dim-text-side'),
+            gridCount: document.getElementById('grid-count-display'),
+            
+            // Color Picker
+            cpSat: document.getElementById('cp-saturation'),
+            cpHue: document.getElementById('cp-hue'),
+            cpSatThumb: document.getElementById('cp-sat-thumb'),
+            cpHueThumb: document.getElementById('cp-hue-thumb'),
+            colorPreview: document.getElementById('color-preview'),
+            hexInput: document.getElementById('hex-input'),
+            paletteContainer: document.getElementById('palette-container'),
+            addToPaletteBtn: document.getElementById('add-to-palette'),
+            clearPaletteBtn: document.getElementById('clear-palette'),
+            
+            // Actions
+            clearCanvasBtn: document.getElementById('clear-canvas-btn'),
+            downloadBtn: document.getElementById('download-btn'),
+            downloadSvgBtn: document.getElementById('download-svg-btn'),
+            printBtn: document.getElementById('print-btn'),
+            
+            // Zoom
+            zoomInBtn: document.getElementById('zoom-in'),
+            zoomOutBtn: document.getElementById('zoom-out'),
+            zoomLabel: document.getElementById('zoom-level')
+        };
+
+        function init() {
+            renderPalette();
+            setupColorPicker();
+            setupGridInputs();
+            setupSVGInteraction();
+            setupZoom();
+            setupPan();
+            
+            updateDimensions();
+        }
+
+        /**
+         * CORE LOGIC
+         */
+        function updateDimensions() {
+            // 1. Calculate physical dimensions in MM
+            let wMm, hMm;
+            if (state.unit === 'in') {
+                wMm = state.width * 25.4;
+                hMm = state.height * 25.4;
+            } else if (state.unit === 'cm') {
+                wMm = state.width * 10;
+                hMm = state.height * 10;
+            } else {
+                wMm = state.width;
+                hMm = state.height;
+            }
+            
+            state.wMm = wMm;
+            state.hMm = hMm;
+
+            // 2. Calculate Grid Metrics
+            const diameterMm = state.dotSizeMm;
+            const radiusMm = diameterMm / 2;
+            const xSpacingMm = diameterMm; 
+            const ySpacingMm = diameterMm * 0.8660254; 
+
+            // Calculate how many rows/cols technically cover the space
+            // We ensure we cover the whole area, letting circles overflow
+            state.cols = Math.ceil(wMm / xSpacingMm);
+            // Simple check to ensure we don't leave a gap if alignment is slightly off
+            if( (state.cols * xSpacingMm) < wMm ) state.cols++; 
+
+            state.rows = Math.ceil(hMm / ySpacingMm);
+            if( (state.rows * ySpacingMm) < hMm ) state.rows++;
+
+            DOM.gridCount.textContent = `~${state.cols}x${state.rows} dots`;
+            DOM.dimTop.textContent = `${state.width} ${state.unit}`;
+            DOM.dimSide.textContent = `${state.height} ${state.unit}`;
+
+            // 3. Set Wrapper Size (The "Paper")
+            // We need to map MM to CSS pixels. 
+            // 96 DPI = 3.7795 px/mm.
+            // We'll use a standard display scale factor.
+            const cssScale = 3.78; 
+            
+            DOM.wrapper.style.width = `${wMm * cssScale}px`;
+            DOM.wrapper.style.height = `${hMm * cssScale}px`;
+
+            // 4. Render SVG
+            // SVG Viewbox uses MM units directly for simplicity
+            DOM.svg.setAttribute('viewBox', `0 0 ${wMm} ${hMm}`);
+            // SVG width/height matches CSS wrapper 1:1 to avoid browser scaling weirdness
+            DOM.svg.setAttribute('width', `${wMm * cssScale}px`);
+            DOM.svg.setAttribute('height', `${hMm * cssScale}px`);
+
+            renderSVGContent(diameterMm, radiusMm, xSpacingMm, ySpacingMm);
+            
+            // Update row markers
+            renderRowNumbers(state.rows, ySpacingMm * cssScale, radiusMm * cssScale);
+        }
+
+        function renderSVGContent(d, r, xS, yS) {
+            let svgContent = '';
+            
+            // Background Rect (White fill for export)
+            svgContent += `<rect x="0" y="0" width="${state.wMm}" height="${state.hMm}" fill="#ffffff" stroke="none" />`;
+
+            for (let row = 0; row < state.rows; row++) {
+                const rowOffset = (row % 2 !== 0) ? r : 0;
+                
+                for (let col = 0; col < state.cols; col++) {
+                    const cx = (col * xS) + r + rowOffset;
+                    const cy = (row * yS) + r;
+                    
+                    // Optimization: Skip if center is waaay outside (visual polish)
+                    // But user asked for "not cut off", so we include edge cases.
+                    
+                    const key = `${row},${col}`;
+                    const fill = state.cells[key] || '#f8fafc'; // Default light slate
+                    const stroke = state.cells[key] ? 'rgba(0,0,0,0.1)' : '#cbd5e1';
+                    const strokeWidth = state.cells[key] ? 0.1 : 0.1; // MM units
+
+                    svgContent += `<circle 
+                        id="cell-${row}-${col}"
+                        data-key="${key}"
+                        cx="${cx}" 
+                        cy="${cy}" 
+                        r="${r - 0.1}" 
+                        fill="${fill}" 
+                        stroke="${stroke}" 
+                        stroke-width="${strokeWidth}"
+                    />`;
+                }
+            }
+            
+            DOM.svg.innerHTML = svgContent;
+        }
+
+        function renderRowNumbers(count, rowHeightPx, radiusPx) {
+            DOM.rowNums.innerHTML = '';
+            for(let i=0; i<count; i++) {
+                const yPos = (i * rowHeightPx) + radiusPx;
+                
+                const el = document.createElement('div');
+                el.innerText = i + 1;
+                el.style.position = 'absolute';
+                el.style.top = `${yPos}px`;
+                el.style.transform = 'translateY(-50%)';
+                el.style.width = '100%';
+                el.style.textAlign = 'right';
+                DOM.rowNums.appendChild(el);
+            }
+        }
+
+        /**
+         * INTERACTION (SVG)
+         */
+        function setupSVGInteraction() {
+            let isPainting = false;
+            let isErasing = false;
+
+            function paintCell(target) {
+                if (target.tagName === 'circle') {
+                    const key = target.dataset.key;
+                    if (!key) return;
+                    
+                    if (isErasing) {
+                        delete state.cells[key];
+                        target.setAttribute('fill', '#f8fafc');
+                        target.setAttribute('stroke', '#cbd5e1');
+                    } else {
+                        state.cells[key] = state.hex;
+                        target.setAttribute('fill', state.hex);
+                        target.setAttribute('stroke', 'rgba(0,0,0,0.1)');
+                    }
+                }
+            }
+
+            DOM.svg.addEventListener('mousedown', (e) => {
+                if (e.button === 0 || e.button === 2) {
+                    isPainting = true;
+                    isErasing = (e.button === 2);
+                    paintCell(e.target);
+                }
+            });
+
+            window.addEventListener('mouseup', () => {
+                isPainting = false;
+                isErasing = false;
+            });
+
+            DOM.svg.addEventListener('mouseover', (e) => {
+                if (isPainting) {
+                    paintCell(e.target);
+                }
+            });
+            
+            // Prevent context menu on right click
+            DOM.svg.addEventListener('contextmenu', e => e.preventDefault());
+            
+            // Touch
+            // SVG touch is tricky because 'elementFromPoint' is needed to find target under finger
+            function handleTouch(e) {
+                e.preventDefault();
+                const touch = e.touches[0];
+                const target = document.elementFromPoint(touch.clientX, touch.clientY);
+                if (target && target.tagName === 'circle' && DOM.svg.contains(target)) {
+                     // Need to re-set mode based on initial touch? 
+                     // Mobile usually doesn't have right click. Assume paint.
+                     // We set isPainting=true in touchstart
+                     paintCell(target);
+                }
+            }
+            
+            DOM.svg.addEventListener('touchstart', (e) => {
+                isPainting = true;
+                isErasing = false;
+                handleTouch(e);
+            }, {passive: false});
+            
+            DOM.svg.addEventListener('touchmove', (e) => {
+                if(isPainting) handleTouch(e);
+            }, {passive: false});
+        }
+
+        /**
+         * EXPORT
+         */
+        function setupExport() {
+             // 1. SVG Export (Vector)
+             DOM.downloadSvgBtn.addEventListener('click', () => {
+                const svgData = DOM.svg.outerHTML;
+                const blob = new Blob([svgData], {type: 'image/svg+xml'});
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.download = `pattern_${state.width}${state.unit}_${state.height}${state.unit}.svg`;
+                link.href = url;
+                link.click();
+            });
+
+            // 2. PNG Export (High Res)
+            DOM.downloadBtn.addEventListener('click', () => {
+                const svgData = new XMLSerializer().serializeToString(DOM.svg);
+                const img = new Image();
+                const scale = 3; // 3x resolution
+                
+                // Create a canvas to draw the SVG
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                
+                const wPx = state.wMm * 3.78 * scale;
+                const hPx = state.hMm * 3.78 * scale;
+                
+                canvas.width = wPx;
+                canvas.height = hPx;
+                
+                img.onload = () => {
+                    ctx.fillStyle = 'white';
+                    ctx.fillRect(0, 0, wPx, hPx);
+                    ctx.drawImage(img, 0, 0, wPx, hPx);
+                    
+                    const link = document.createElement('a');
+                    link.download = `pattern_${state.width}${state.unit}_${state.height}${state.unit}.png`;
+                    link.href = canvas.toDataURL('image/png');
+                    link.click();
+                };
+                
+                // Load SVG blob
+                const blob = new Blob([svgData], {type: 'image/svg+xml;charset=utf-8'});
+                const url = URL.createObjectURL(blob);
+                img.src = url;
+            });
+            
+            // 3. Print
+            DOM.printBtn.addEventListener('click', () => {
+                window.print();
+            });
+        }
+
+
+        /**
+         * UTILS & SETUP
+         */
+        function setupZoom() {
+            function setZoom(z) {
+                state.zoom = Math.max(0.2, Math.min(5.0, z));
+                DOM.scaler.style.transform = `scale(${state.zoom})`;
+                DOM.zoomLabel.textContent = `${Math.round(state.zoom * 100)}%`;
+            }
+
+            DOM.zoomInBtn.addEventListener('click', () => setZoom(state.zoom + 0.1));
+            DOM.zoomOutBtn.addEventListener('click', () => setZoom(state.zoom - 0.1));
+            
+            DOM.container.addEventListener('wheel', (e) => {
+                if(e.ctrlKey) {
+                    e.preventDefault();
+                    const delta = e.deltaY > 0 ? -0.1 : 0.1;
+                    setZoom(state.zoom + delta);
+                }
+            }, { passive: false });
+        }
+
+        function setupPan() {
+            let isPanning = false;
+            let startX, startY, scrollLeft, scrollTop;
+
+            DOM.container.addEventListener('mousedown', (e) => {
+                if (e.button === 1) {
+                    e.preventDefault();
+                    isPanning = true;
+                    DOM.container.classList.add('cursor-grabbing');
+                    startX = e.pageX - DOM.container.offsetLeft;
+                    startY = e.pageY - DOM.container.offsetTop;
+                    scrollLeft = DOM.container.scrollLeft;
+                    scrollTop = DOM.container.scrollTop;
+                }
+            });
+
+            window.addEventListener('mousemove', (e) => {
+                if (!isPanning) return;
+                e.preventDefault();
+                const x = e.pageX - DOM.container.offsetLeft;
+                const y = e.pageY - DOM.container.offsetTop;
+                const walkX = (x - startX) * 1.5;
+                const walkY = (y - startY) * 1.5;
+                DOM.container.scrollLeft = scrollLeft - walkX;
+                DOM.container.scrollTop = scrollTop - walkY;
+            });
+
+            window.addEventListener('mouseup', (e) => {
+                if (isPanning && e.button === 1) {
+                    isPanning = false;
+                    DOM.container.classList.remove('cursor-grabbing');
+                }
+            });
+        }
+
+        function setupGridInputs() {
+            DOM.unitBtns.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    DOM.unitBtns.forEach(b => {
+                        b.classList.remove('bg-white', 'shadow-sm', 'text-slate-800');
+                        b.classList.add('text-slate-500');
+                    });
+                    btn.classList.add('bg-white', 'shadow-sm', 'text-slate-800');
+                    btn.classList.remove('text-slate-500');
+                    
+                    const oldUnit = state.unit;
+                    const newUnit = btn.dataset.unit;
+                    
+                    if (oldUnit !== newUnit) {
+                        state.width = convertUnit(state.width, oldUnit, newUnit);
+                        state.height = convertUnit(state.height, oldUnit, newUnit);
+                        state.unit = newUnit;
+                        
+                        DOM.wInput.value = parseFloat(state.width.toFixed(2));
+                        DOM.hInput.value = parseFloat(state.height.toFixed(2));
+                        updateDimensions();
+                    }
+                });
+            });
+
+            function handleDimChange() {
+                state.width = parseFloat(DOM.wInput.value) || 0;
+                state.height = parseFloat(DOM.hInput.value) || 0;
+                state.dotSizeMm = parseFloat(DOM.dInput.value) || 3;
+                updateDimensions();
+            }
+
+            DOM.wInput.addEventListener('input', handleDimChange);
+            DOM.hInput.addEventListener('input', handleDimChange);
+            DOM.dInput.addEventListener('input', handleDimChange);
+            
+            DOM.clearCanvasBtn.addEventListener('click', () => {
+                if(confirm('Clear entire pattern?')) {
+                    state.cells = {};
+                    updateDimensions(); // re-render
+                }
+            });
+            
+            setupExport();
+        }
+
+        function convertUnit(val, from, to) {
+            let mm = 0;
+            if (from === 'in') mm = val * 25.4;
+            else if (from === 'cm') mm = val * 10;
+            else mm = val;
+            
+            if (to === 'in') return mm / 25.4;
+            if (to === 'cm') return mm / 10;
+            return mm;
+        }
+
+        function setupColorPicker() {
+            // HSV/Hex Helpers
+            function hsvToHex(h, s, v) {
+                s /= 100; v /= 100;
+                let c = v * s, x = c * (1 - Math.abs(((h / 60) % 2) - 1)), m = v - c, r = 0, g = 0, b = 0;
+                if (0 <= h && h < 60) { r = c; g = x; b = 0; }
+                else if (60 <= h && h < 120) { r = x; g = c; b = 0; }
+                else if (120 <= h && h < 180) { r = 0; g = c; b = x; }
+                else if (180 <= h && h < 240) { r = 0; g = x; b = c; }
+                else if (240 <= h && h < 300) { r = x; g = 0; b = c; }
+                else if (300 <= h && h < 360) { r = c; g = 0; b = x; }
+                return "#" + [r, g, b].map(x => Math.round((x + m) * 255).toString(16).padStart(2, "0")).join("");
+            }
+
+            function hexToHsv(hex) {
+                let r = parseInt(hex.substring(1, 3), 16) / 255;
+                let g = parseInt(hex.substring(3, 5), 16) / 255;
+                let b = parseInt(hex.substring(5, 7), 16) / 255;
+                let max = Math.max(r, g, b), min = Math.min(r, g, b);
+                let h, s, v = max;
+                let d = max - min;
+                s = max === 0 ? 0 : d / max;
+                if (max === min) h = 0;
+                else {
+                    switch (max) {
+                        case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+                        case g: h = (b - r) / d + 2; break;
+                        case b: h = (r - g) / d + 4; break;
+                    }
+                    h /= 6;
+                }
+                return { h: h * 360, s: s * 100, v: v * 100 };
+            }
+
+            function updateColorUI() {
+                const hex = hsvToHex(state.color.h, state.color.s, state.color.v);
+                state.hex = hex;
+                DOM.colorPreview.style.backgroundColor = hex;
+                DOM.hexInput.value = hex.substring(1).toUpperCase();
+                DOM.cpSat.style.backgroundColor = `hsl(${state.color.h}, 100%, 50%)`;
+                DOM.cpHueThumb.style.left = `${(state.color.h / 360) * 100}%`;
+                DOM.cpSatThumb.style.left = `${state.color.s}%`;
+                DOM.cpSatThumb.style.top = `${100 - state.color.v}%`;
+            }
+
+            let dragSat = false;
+            function setSat(e) {
+                const rect = DOM.cpSat.getBoundingClientRect();
+                let x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+                let y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+                state.color.s = x * 100;
+                state.color.v = 100 - (y * 100);
+                updateColorUI();
+            }
+
+            DOM.cpSat.addEventListener('mousedown', e => { dragSat = true; setSat(e); });
+            window.addEventListener('mousemove', e => { if (dragSat) setSat(e); });
+            window.addEventListener('mouseup', () => dragSat = false);
+
+            let dragHue = false;
+            function setHue(e) {
+                const rect = DOM.cpHue.getBoundingClientRect();
+                let x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+                state.color.h = x * 360;
+                updateColorUI();
+            }
+
+            DOM.cpHue.addEventListener('mousedown', e => { dragHue = true; setHue(e); });
+            window.addEventListener('mousemove', e => { if (dragHue) setHue(e); });
+            window.addEventListener('mouseup', () => dragHue = false);
+
+            DOM.hexInput.addEventListener('change', () => {
+                let val = DOM.hexInput.value;
+                if(!val.startsWith('#')) val = '#' + val;
+                if(/^#[0-9A-F]{6}$/i.test(val)) {
+                    state.color = hexToHsv(val);
+                    updateColorUI();
+                }
+            });
+
+            DOM.addToPaletteBtn.addEventListener('click', () => {
+                if (!state.palette.includes(state.hex)) {
+                    state.palette.push(state.hex);
+                    renderPalette();
+                }
+            });
+            
+            DOM.clearPaletteBtn.addEventListener('click', () => {
+                state.palette = [];
+                renderPalette();
+            });
+
+            updateColorUI();
+        }
+
+        function renderPalette() {
+            DOM.paletteContainer.innerHTML = '';
+            state.palette.forEach(color => {
+                const div = document.createElement('div');
+                div.className = 'w-6 h-6 rounded cursor-pointer border border-slate-200 shadow-sm hover:scale-110 transition-transform';
+                div.style.backgroundColor = color;
+                div.onclick = () => {
+                    state.hex = color;
+                    DOM.colorPreview.style.backgroundColor = color;
+                    DOM.hexInput.value = color.substring(1);
+                };
+                DOM.paletteContainer.appendChild(div);
+            });
+        }
+
+        init();
+
+    </script>
+</body>
+</html>
+
+
